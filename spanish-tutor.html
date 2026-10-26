@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1f4fd8">
+<title>Spanish Tutor</title>
+<style>
+:root{--bg:#f1f4f7;--card:#fff;--ink:#14213d;--mute:#5d6b82;--blue:#1f4fd8;--sun:#f2b632;--ok:#e6f4ea;--okb:#2e7d4f;--line:#d9e0ea;--me:#dfe8ff}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1a2b;--card:#17263d;--ink:#eef2f9;--mute:#9fb0c9;--blue:#7ea2ff;--ok:#16382a;--okb:#7ad39e;--line:#2a3b57;--me:#243a66}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+html,body{height:100%;margin:0}
+body{display:flex;flex-direction:column;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif;padding-top:env(safe-area-inset-top,0)}
+header{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:3px solid var(--sun);background:var(--card)}
+header b{font:700 20px Georgia,serif;flex:1}
+button{font:inherit;color:inherit;border:1px solid var(--line);background:var(--card);border-radius:10px;padding:8px 12px;cursor:pointer}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--blue);outline-offset:1px}
+button.on,.pri{background:var(--blue);color:#fff;border-color:var(--blue)}
+@media(prefers-color-scheme:dark){button.on,.pri{color:#0e1a2b}}
+main{flex:1;overflow-y:auto;padding:12px}
+.b{max-width:92%;margin:0 0 10px;padding:10px 12px;border-radius:14px;background:var(--card);border:1px solid var(--line)}
+.b.me{margin-left:auto;background:var(--me);border-color:transparent}
+.es{font:20px/1.4 Georgia,serif}
+.w{border-bottom:2px dotted var(--blue);cursor:pointer}
+.en{color:var(--mute);margin-top:6px}
+.fix{background:var(--ok);border-left:4px solid var(--okb);padding:8px 10px;border-radius:8px;margin-bottom:8px;font-size:15px}
+.acts{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.acts button{padding:5px 9px;font-size:14px}
+.note{background:transparent;border:1px dashed var(--line)}
+footer{padding:8px 12px calc(10px + env(safe-area-inset-bottom,0));background:var(--card);border-top:1px solid var(--line)}
+.row{display:flex;gap:6px;margin-bottom:8px}
+input,select{font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:9px 10px;width:100%}
+.row input{flex:1;min-width:0}
+#mic{width:100%;padding:14px;font-size:18px;font-weight:600}
+#mic.rec{background:#c62828;border-color:#c62828;color:#fff}
+dialog{width:min(92vw,420px);border:1px solid var(--line);border-radius:14px;background:var(--card);color:var(--ink)}
+dialog label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
+#sheet{position:fixed;left:0;right:0;bottom:0;background:var(--card);border-top:3px solid var(--sun);padding:14px 14px calc(14px + env(safe-area-inset-bottom,0));box-shadow:0 -8px 24px #0004;z-index:5}
+#sheet h3{margin:0;font:700 24px Georgia,serif}
+.item{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--line)}
+.item div{flex:1}
+.card{text-align:center;padding:30px 16px;background:var(--card);border:1px solid var(--line);border-radius:14px;margin:12px 0}
+.card .es{font-size:30px}
+#toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;z-index:9;max-width:90%}
+</style>
+</head>
+<body>
+<header>
+  <b>Spanish Tutor</b>
+  <button id="tc" class="on">Chat</button><button id="tw">Words</button><button id="gear" aria-label="Settings">⚙️</button>
+</header>
+<main id="chat"><div id="log"></div></main>
+<main id="words" hidden></main>
+<footer id="bar">
+  <div class="row">
+    <input id="inp" placeholder="Type Spanish, or ask in English…" autocomplete="off">
+    <button id="send" class="pri">Send</button><button id="ask">Ask</button>
+  </div>
+  <button id="mic" class="pri">🎤 Tap to talk</button>
+</footer>
+
+<dialog id="set">
+  <h3 style="margin:0 0 4px;font-family:Georgia,serif">Settings</h3>
+  <label for="key">Groq API key (stays in this browser)</label>
+  <input id="key" type="password" placeholder="gsk_…" autocomplete="off">
+  <label for="model">Chat model</label>
+  <input id="model">
+  <label for="lvl">Level</label>
+  <select id="lvl"><option>absolute beginner</option><option>advanced beginner</option><option>lower intermediate</option></select>
+  <label for="scn">Scenario</label>
+  <select id="scn"><option>Free chat</option><option>Introducing myself</option><option>At a café</option><option>Asking for directions</option><option>Shopping</option><option>Travel and the airport</option><option>Family and friends</option></select>
+  <label><input type="checkbox" id="hide" style="width:auto"> Hide English translations until I tap</label>
+  <div class="row" style="margin-top:14px"><button id="newc">Start new conversation</button><button id="ok" class="pri" style="flex:1">Save</button></div>
+</dialog>
+<div id="sheet" hidden></div>
+<div id="toast" hidden></div>
+
+<script>
+const $=s=>document.querySelector(s);
+const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
+const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+let S=Object.assign({key:'',model:'llama-3.3-70b-versatile',lvl:'absolute beginner',scn:'Free chat',hide:true},load('st',{}));
+let V=load('vocab',[]), hist=[], lastEs='', rec=null, chunks=[];
+const API='https://api.groq.com/openai/v1/';
+
+function toast(t){const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,3500)}
+function say(t,rate){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='es-MX';const v=speechSynthesis.getVoices().find(v=>v.lang.toLowerCase().startsWith('es'));if(v)u.voice=v;u.rate=rate||0.9;speechSynthesis.speak(u)}catch(e){toast('Voice not available on this device')}}
+function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
+function btn(label,fn){const b=el('button',null,label);b.onclick=fn;return b}
+function words(t){const f=document.createDocumentFragment();t.split(/(\p{L}+)/u).forEach(p=>{if(/^\p{L}+$/u.test(p)){const s=el('span','w',p);s.onclick=()=>lookup(p,t);f.append(s)}else f.append(p)});return f}
+
+async function llm(system,msgs){
+  if(!S.key){$('#set').showModal();throw new Error('Add your Groq API key first.')}
+  const r=await fetch(API+'chat/completions',{method:'POST',headers:{Authorization:'Bearer '+S.key,'Content-Type':'application/json'},
+    body:JSON.stringify({model:S.model,temperature:0.5,response_format:{type:'json_object'},messages:[{role:'system',content:system},...msgs]})});
+  if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute and try again.':r.status==401?'API key not accepted.':'Groq error '+r.status);
+  return JSON.parse((await r.json()).choices[0].message.content);
+}
+const tutorSys=()=>`You are a warm Spanish tutor for an English speaker who is an ${S.lvl}. Scenario: ${S.scn}. Reply in simple Spanish: one or two short sentences, common words, mostly present tense. End with an easy question. If the learner's last message had Spanish mistakes, include a correction; if it was fine, fix is null. Return JSON only: {"es":"reply","en":"English translation","fix":null or {"said":"what they said","better":"corrected Spanish","why":"one short English reason"}}`;
+
+function add(node){$('#log').append(node);const m=$('#chat');m.scrollTop=m.scrollHeight;return node}
+function bubble(cls){return add(el('div','b '+cls))}
+function userBubble(t){const b=bubble('me');b.append(el('div','es',t))}
+
+async function turn(){
+  const wait=bubble('');wait.textContent='…';
+  try{
+    const r=await llm(tutorSys(),hist.slice(-12));
+    hist.push({role:'assistant',content:JSON.stringify(r)});
+    wait.textContent='';lastEs=r.es;
+    if(r.fix&&r.fix.better){const f=el('div','fix');f.append(el('div',null,'You said: '+r.fix.said),el('div',null,'Better: '+r.fix.better),el('div',null,r.fix.why));wait.append(f)}
+    const es=el('div','es');es.append(words(r.es));wait.append(es);
+    const en=el('div','en',r.en);en.hidden=S.hide;wait.append(en);
+    const a=el('div','acts');
+    a.append(btn('🔊',()=>say(r.es)),btn('🐢 Slow',()=>say(r.es,0.5)),btn('EN',()=>en.hidden=!en.hidden),btn('💡 Explain',()=>explain(r.es)));
+    wait.append(a);say(r.es);
+  }catch(e){wait.remove();toast(e.message)}
+}
+async function send(t){t=t.trim();if(!t)return;userBubble(t);hist.push({role:'user',content:t});await turn()}
+
+const helpSys=`You help an absolute beginner learn Spanish. Answer in plain, short English. Break down key words and why the sentence is built that way. If the learner wants a Spanish phrase, put it in "es". Return JSON only: {"answer":"English explanation","es":"Spanish phrase or empty string"}`;
+async function help(q,show){
+  const wait=bubble('note');wait.textContent='…';
+  try{
+    const r=await llm(helpSys,[{role:'user',content:(lastEs?'The tutor last said: "'+lastEs+'". ':'')+q}]);
+    wait.textContent='';wait.append(el('div',null,r.answer));
+    if(r.es){const e=el('div','es');e.style.marginTop='8px';e.append(words(r.es));wait.append(e);const a=el('div','acts');a.append(btn('🔊',()=>say(r.es)),btn('🐢 Slow',()=>say(r.es,0.5)));wait.append(a)}
+  }catch(e){wait.remove();toast(e.message)}
+}
+const explain=t=>help('Explain this Spanish sentence word by word: "'+t+'"');
+
+async function lookup(w,ctx){
+  const s=$('#sheet');s.hidden=false;s.textContent='…';
+  try{
+    const r=await llm(`Beginner Spanish dictionary. Return JSON only: {"word":"the word as given","base":"dictionary form, e.g. infinitive","meaning":"English meaning in this context","example":"short simple Spanish example","example_en":"English translation"}`,[{role:'user',content:'Word: '+w+'. Context: '+ctx}]);
+    s.textContent='';
+    s.append(el('h3',null,r.word),el('div',null,(r.base&&r.base.toLowerCase()!=w.toLowerCase()?'Base form: '+r.base+' · ':'')+r.meaning));
+    const ex=el('div','es');ex.style.marginTop='8px';ex.textContent=r.example;
+    s.append(ex,el('div','en',r.example_en));
+    const a=el('div','acts');
+    a.append(btn('🔊',()=>say(r.word)),btn('Example 🔊',()=>say(r.example)),btn('⭐ Save',()=>{if(!V.some(v=>v.w.toLowerCase()==r.word.toLowerCase())){V.push({w:r.word,base:r.base,m:r.meaning,ex:r.example});save('vocab',V)}toast('Saved');renderWords()}),btn('Close',()=>s.hidden=true));
+    s.append(a);
+  }catch(e){s.hidden=true;toast(e.message)}
+}
+
+async function toggleMic(){
+  const m=$('#mic');
+  if(rec&&rec.state=='recording'){rec.stop();return}
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({audio:true});
+    rec=new MediaRecorder(st);chunks=[];
+    rec.ondataavailable=e=>chunks.push(e.data);
+    rec.onstop=async()=>{
+      st.getTracks().forEach(t=>t.stop());m.classList.remove('rec');m.textContent='🎤 Tap to talk';
+      try{
+        if(!S.key){$('#set').showModal();return}
+        const fd=new FormData();fd.append('file',new Blob(chunks,{type:rec.mimeType}),'speech.webm');
+        fd.append('model','whisper-large-v3-turbo');fd.append('language','es');fd.append('temperature','0');
+        const r=await fetch(API+'audio/transcriptions',{method:'POST',headers:{Authorization:'Bearer '+S.key},body:fd});
+        if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute.':'Could not transcribe ('+r.status+')');
+        const t=(await r.json()).text;
+        if(!t||!t.trim())toast("I didn't hear anything. Try again.");else send(t);
+      }catch(e){toast(e.message)}
+    };
+    rec.start();m.classList.add('rec');m.textContent='⏹ Tap when done';
+  }catch(e){toast('Microphone blocked. Allow it in your browser settings (the page must use https).')}
+}
+
+/* Words tab */
+let card=null;
+function renderWords(){
+  const w=$('#words');w.textContent='';
+  if(!V.length){w.append(el('p','en','No saved words yet. Tap any Spanish word in the chat, then tap Save.'));return}
+  if(card){
+    const c=el('div','card');c.append(el('div','es',card.w));
+    const back=el('div','en',card.m+' · '+card.ex);back.hidden=true;c.append(back);
+    const a=el('div','acts');a.style.justifyContent='center';
+    a.append(btn('🔊',()=>say(card.w)),btn('Show answer',()=>back.hidden=false),btn('Next',()=>{card=V[Math.floor(Math.random()*V.length)];renderWords()}),btn('Done',()=>{card=null;renderWords()}));
+    c.append(a);w.append(c);return;
+  }
+  const p=btn('Practice flashcards',()=>{card=V[Math.floor(Math.random()*V.length)];renderWords()});p.className='pri';p.style.width='100%';w.append(p);
+  V.forEach((v,i)=>{const r=el('div','item');const d=el('div');d.append(el('b',null,v.w),el('div','en',v.m));
+    r.append(d,btn('🔊',()=>say(v.w)),btn('✕',()=>{V.splice(i,1);save('vocab',V);renderWords()}));w.append(r)});
+}
+function tab(t){$('#chat').hidden=t!='c';$('#words').hidden=t!='w';$('#bar').hidden=t!='c';$('#tc').classList.toggle('on',t=='c');$('#tw').classList.toggle('on',t=='w');if(t=='w')renderWords()}
+
+/* Setup */
+async function start(){
+  hist=[];$('#log').textContent='';lastEs='';
+  hist.push({role:'user',content:'(Begin the conversation with a simple greeting and one easy question.)'});
+  await turn();
+}
+$('#tc').onclick=()=>tab('c');$('#tw').onclick=()=>tab('w');
+$('#mic').onclick=toggleMic;
+$('#send').onclick=()=>{const t=$('#inp').value;$('#inp').value='';send(t)};
+$('#ask').onclick=()=>{const t=$('#inp').value.trim();$('#inp').value='';if(t)help(t)};
+$('#inp').onkeydown=e=>{if(e.key=='Enter')$('#send').click()};
+$('#gear').onclick=()=>{$('#key').value=S.key;$('#model').value=S.model;$('#lvl').value=S.lvl;$('#scn').value=S.scn;$('#hide').checked=S.hide;$('#set').showModal()};
+$('#ok').onclick=()=>{S={key:$('#key').value.trim(),model:$('#model').value.trim()||'llama-3.3-70b-versatile',lvl:$('#lvl').value,scn:$('#scn').value,hide:$('#hide').checked};save('st',S);$('#set').close()};
+$('#newc').onclick=()=>{$('#ok').click();start()};
+try{speechSynthesis.getVoices()}catch(e){}
+if(!S.key){$('#gear').click()}else start();
+</script>
+</body>
+</html>
