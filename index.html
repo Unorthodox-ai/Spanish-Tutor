@@ -42,7 +42,7 @@ dialog label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
 .card{text-align:center;padding:30px 16px;background:var(--card);border:1px solid var(--line);border-radius:14px;margin:12px 0}
 .card .es{font-size:30px}
 #toast{position:fixed;top:60px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:10px;z-index:9;max-width:90%}
-</style>
+#stat{text-align:center;color:var(--mute);font-size:15px;margin-bottom:8px;min-height:22px}.enl{font-size:17px;margin:4px 0}</style>
 </head>
 <body>
 <header>
@@ -52,11 +52,12 @@ dialog label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
 <main id="chat"><div id="log"></div></main>
 <main id="words" hidden></main>
 <footer id="bar">
+  <div id="stat"></div>
   <div class="row">
-    <input id="inp" placeholder="Type Spanish, or ask in English…" autocomplete="off">
-    <button id="send" class="pri">Send</button><button id="ask">Ask</button>
+    <input id="inp" placeholder="Or type here (English or Spanish)…" autocomplete="off">
+    <button id="send">Send</button>
   </div>
-  <button id="mic" class="pri">🎤 Tap to talk</button>
+  <button id="mic" class="pri">📞 Start class (hands-free)</button>
 </footer>
 
 <dialog id="set">
@@ -70,7 +71,7 @@ dialog label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
   <label for="scn">Scenario</label>
   <select id="scn"><option>Free chat</option><option>Introducing myself</option><option>At a café</option><option>Asking for directions</option><option>Shopping</option><option>Travel and the airport</option><option>Family and friends</option></select>
   <label><input type="checkbox" id="hide" style="width:auto"> Hide English translations until I tap</label>
-  <div class="row" style="margin-top:14px"><button id="newc">Start new conversation</button><button id="ok" class="pri" style="flex:1">Save</button></div>
+  <div class="row" style="margin-top:14px"><button id="newc">New class</button><button id="ok" class="pri" style="flex:1">Save</button></div>
 </dialog>
 <div id="sheet" hidden></div>
 <div id="toast" hidden></div>
@@ -81,14 +82,34 @@ const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){re
 const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 let S=Object.assign({key:'',model:'openai/gpt-oss-120b',lvl:'absolute beginner',scn:'Free chat',hide:true},load('st',{}));
 if(!/gpt-oss|compound|qwen/.test(S.model))S.model='openai/gpt-oss-120b';
-let V=load('vocab',[]), hist=[], lastEs='', rec=null, chunks=[];
+let V=load('vocab',[]),hist=[],lastSegs=[],call=false,locked=false,speaking=false;
+let stream,ac,an,buf,timer,wl,rec,chunks,t0,lastVoice,noise=0.01;
 const API='https://api.groq.com/openai/v1/';
 
 function toast(t){const e=$('#toast');e.textContent=t;e.hidden=false;clearTimeout(toast.t);toast.t=setTimeout(()=>e.hidden=true,3500)}
-function say(t,rate){try{speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(t);u.lang='es-MX';const v=speechSynthesis.getVoices().find(v=>v.lang.toLowerCase().startsWith('es'));if(v)u.voice=v;u.rate=rate||0.9;speechSynthesis.speak(u)}catch(e){toast('Voice not available on this device')}}
+function setStat(m){$('#stat').textContent=call?(m||'👂 Listening… just talk'):'Tap Start class to talk hands-free, or type below.'}
 function el(tag,cls,txt){const e=document.createElement(tag);if(cls)e.className=cls;if(txt!=null)e.textContent=txt;return e}
 function btn(label,fn){const b=el('button',null,label);b.onclick=fn;return b}
 function words(t){const f=document.createDocumentFragment();t.split(/(\p{L}+)/u).forEach(p=>{if(/^\p{L}+$/u.test(p)){const s=el('span','w',p);s.onclick=()=>lookup(p,t);f.append(s)}else f.append(p)});return f}
+
+function speakSegs(segs,rate){
+  return new Promise(res=>{
+    try{
+      speechSynthesis.cancel();speaking=true;setStat('🗣 Tutor speaking…');
+      const vs=speechSynthesis.getVoices(),pick=l=>vs.find(v=>v.lang.toLowerCase().startsWith(l));
+      const n=segs.length;let done=false;
+      const fin=()=>{if(done)return;done=true;setTimeout(()=>{speaking=false;setStat();res()},500)};
+      segs.forEach((g,i)=>{
+        const u=new SpeechSynthesisUtterance(g.text),es=g.lang=='es';
+        u.lang=es?'es-MX':'en-US';const v=pick(es?'es':'en');if(v)u.voice=v;
+        u.rate=rate||(es?0.85:1);
+        if(i==n-1){u.onend=fin;u.onerror=fin}
+        speechSynthesis.speak(u);
+      });
+      setTimeout(fin,segs.reduce((a,g)=>a+g.text.length,0)*160+4000);
+    }catch(e){speaking=false;res()}
+  });
+}
 
 async function llm(system,msgs){
   if(!S.key){$('#set').showModal();throw new Error('Add your Groq API key first.')}
@@ -97,38 +118,34 @@ async function llm(system,msgs){
   if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute and try again.':r.status==401?'API key not accepted.':r.status==404?'Model "'+S.model+'" not found. Pick a current one in Settings.':'Groq error '+r.status);
   return JSON.parse((await r.json()).choices[0].message.content);
 }
-const tutorSys=()=>`You are a warm Spanish tutor for an English speaker who is an ${S.lvl}. Scenario: ${S.scn}. Reply in simple Spanish: one or two short sentences, common words, mostly present tense. End with an easy question. If the learner's last message had Spanish mistakes, include a correction; if it was fine, fix is null. Return JSON only: {"es":"reply","en":"English translation","fix":null or {"said":"what they said","better":"corrected Spanish","why":"one short English reason"}}`;
+const tutorSys=()=>`You are a friendly, patient Spanish tutor on a live voice call with an English-speaking learner (${S.lvl}). Scenario: ${S.scn}. Keep every turn short (1 to 3 sentences) because it is spoken aloud. If the learner speaks Spanish, reply in simple Spanish (common words, present tense) and end with an easy question. If the learner speaks English (confused, asking what a word means, asking how to say something, wanting an explanation), reply in English: explain clearly and briefly, give the Spanish phrase for them to repeat, and keep chatting in English as long as they do. When they seem to understand, gently invite them back to Spanish. Return JSON only: {"segs":[{"lang":"es" or "en","text":"...","en":"English translation, only for es segments"}],"fix":null or {"said":"...","better":"...","why":"short English reason"}}. Split mixed replies into segments by language. Include fix only if the learner spoke Spanish with a mistake.`;
 
-function add(node){$('#log').append(node);const m=$('#chat');m.scrollTop=m.scrollHeight;return node}
-function bubble(cls){return add(el('div','b '+cls))}
-function userBubble(t){const b=bubble('me');b.append(el('div','es',t))}
+function add(n){$('#log').append(n);const m=$('#chat');m.scrollTop=m.scrollHeight;return n}
+function bubble(c){return add(el('div','b '+c))}
 
 async function turn(){
-  const wait=bubble('');wait.textContent='…';
+  locked=true;setStat('🧠 Thinking…');
+  const b=bubble('');b.textContent='…';
   try{
-    const r=await llm(tutorSys(),hist.slice(-12));
+    const r=await llm(tutorSys(),hist.slice(-14));
     hist.push({role:'assistant',content:JSON.stringify(r)});
-    wait.textContent='';lastEs=r.es;
-    if(r.fix&&r.fix.better){const f=el('div','fix');f.append(el('div',null,'You said: '+r.fix.said),el('div',null,'Better: '+r.fix.better),el('div',null,r.fix.why));wait.append(f)}
-    const es=el('div','es');es.append(words(r.es));wait.append(es);
-    const en=el('div','en',r.en);en.hidden=S.hide;wait.append(en);
+    const segs=(r.segs||[]).filter(g=>g&&g.text);b.textContent='';
+    if(r.fix&&r.fix.better){const f=el('div','fix');f.append(el('div',null,'You said: '+r.fix.said),el('div',null,'Better: '+r.fix.better),el('div',null,r.fix.why));b.append(f)}
+    const ens=[];
+    segs.forEach(g=>{
+      if(g.lang=='es'){const d=el('div','es');d.append(words(g.text));b.append(d);if(g.en){const e=el('div','en',g.en);e.hidden=S.hide;ens.push(e);b.append(e)}}
+      else b.append(el('div','enl',g.text));
+    });
     const a=el('div','acts');
-    a.append(btn('🔊',()=>say(r.es)),btn('🐢 Slow',()=>say(r.es,0.5)),btn('EN',()=>en.hidden=!en.hidden),btn('💡 Explain',()=>explain(r.es)));
-    wait.append(a);say(r.es);
-  }catch(e){wait.remove();toast(e.message)}
+    a.append(btn('🔁 Replay',()=>speakSegs(segs)),btn('🐢 Slow',()=>speakSegs(segs.filter(g=>g.lang=='es'),0.5)));
+    if(ens.length)a.append(btn('EN',()=>ens.forEach(e=>e.hidden=!e.hidden)));
+    a.append(btn('💡 Explain',()=>send('Please explain what you just said, in English.')));
+    b.append(a);lastSegs=segs;
+    await speakSegs(segs);
+  }catch(e){b.remove();toast(e.message)}
+  locked=false;setStat();
 }
-async function send(t){t=t.trim();if(!t)return;userBubble(t);hist.push({role:'user',content:t});await turn()}
-
-const helpSys=`You help an absolute beginner learn Spanish. Answer in plain, short English. Break down key words and why the sentence is built that way. If the learner wants a Spanish phrase, put it in "es". Return JSON only: {"answer":"English explanation","es":"Spanish phrase or empty string"}`;
-async function help(q,show){
-  const wait=bubble('note');wait.textContent='…';
-  try{
-    const r=await llm(helpSys,[{role:'user',content:(lastEs?'The tutor last said: "'+lastEs+'". ':'')+q}]);
-    wait.textContent='';wait.append(el('div',null,r.answer));
-    if(r.es){const e=el('div','es');e.style.marginTop='8px';e.append(words(r.es));wait.append(e);const a=el('div','acts');a.append(btn('🔊',()=>say(r.es)),btn('🐢 Slow',()=>say(r.es,0.5)));wait.append(a)}
-  }catch(e){wait.remove();toast(e.message)}
-}
-const explain=t=>help('Explain this Spanish sentence word by word: "'+t+'"');
+async function send(t){t=t.trim();if(!t)return;const u=bubble('me');u.append(el('div','es',t));hist.push({role:'user',content:t});await turn()}
 
 async function lookup(w,ctx){
   const s=$('#sheet');s.hidden=false;s.textContent='…';
@@ -139,32 +156,58 @@ async function lookup(w,ctx){
     const ex=el('div','es');ex.style.marginTop='8px';ex.textContent=r.example;
     s.append(ex,el('div','en',r.example_en));
     const a=el('div','acts');
-    a.append(btn('🔊',()=>say(r.word)),btn('Example 🔊',()=>say(r.example)),btn('⭐ Save',()=>{if(!V.some(v=>v.w.toLowerCase()==r.word.toLowerCase())){V.push({w:r.word,base:r.base,m:r.meaning,ex:r.example});save('vocab',V)}toast('Saved');renderWords()}),btn('Close',()=>s.hidden=true));
+    a.append(btn('🔊',()=>speakSegs([{lang:'es',text:r.word}])),btn('Example 🔊',()=>speakSegs([{lang:'es',text:r.example}])),btn('⭐ Save',()=>{if(!V.some(v=>v.w.toLowerCase()==r.word.toLowerCase())){V.push({w:r.word,base:r.base,m:r.meaning,ex:r.example});save('vocab',V)}toast('Saved')}),btn('Close',()=>s.hidden=true));
     s.append(a);
   }catch(e){s.hidden=true;toast(e.message)}
 }
 
-async function toggleMic(){
-  const m=$('#mic');
-  if(rec&&rec.state=='recording'){rec.stop();return}
+/* Hands-free call */
+function tick(){
+  if(!call||locked||speaking)return;
+  an.getFloatTimeDomainData(buf);
+  let sum=0;for(let i=0;i<buf.length;i++)sum+=buf[i]*buf[i];
+  const rms=Math.sqrt(sum/buf.length),thr=Math.max(0.02,noise*3),now=Date.now();
+  if(rms>thr){
+    lastVoice=now;
+    if(!rec){chunks=[];rec=new MediaRecorder(stream);const c=chunks;rec.ondataavailable=e=>c.push(e.data);rec.start();t0=now;setStat('🎙 Hearing you…')}
+  }else if(!rec){noise=noise*0.95+rms*0.05}
+  if(rec&&(now-lastVoice>1400||now-t0>30000)){
+    const r=rec,dur=lastVoice-t0;rec=null;
+    r.onstop=()=>{if(dur>500)transcribe(new Blob(chunks,{type:r.mimeType}));else setStat()};
+    r.stop();
+  }
+}
+async function transcribe(blob){
+  locked=true;setStat('✍️ Listening to what you said…');
   try{
-    const st=await navigator.mediaDevices.getUserMedia({audio:true});
-    rec=new MediaRecorder(st);chunks=[];
-    rec.ondataavailable=e=>chunks.push(e.data);
-    rec.onstop=async()=>{
-      st.getTracks().forEach(t=>t.stop());m.classList.remove('rec');m.textContent='🎤 Tap to talk';
-      try{
-        if(!S.key){$('#set').showModal();return}
-        const fd=new FormData();fd.append('file',new Blob(chunks,{type:rec.mimeType}),'speech.webm');
-        fd.append('model','whisper-large-v3');fd.append('language','es');fd.append('temperature','0');
-        const r=await fetch(API+'audio/transcriptions',{method:'POST',headers:{Authorization:'Bearer '+S.key},body:fd});
-        if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute.':'Could not transcribe ('+r.status+')');
-        const t=(await r.json()).text;
-        if(!t||!t.trim())toast("I didn't hear anything. Try again.");else send(t);
-      }catch(e){toast(e.message)}
-    };
-    rec.start();m.classList.add('rec');m.textContent='⏹ Tap when done';
-  }catch(e){toast('Microphone blocked. Allow it in your browser settings (the page must use https).')}
+    const fd=new FormData();fd.append('file',blob,'speech.webm');fd.append('model','whisper-large-v3');
+    fd.append('response_format','verbose_json');fd.append('temperature','0');
+    fd.append('prompt','A conversation between an English-speaking beginner and a Spanish tutor. The learner mixes English and Spanish.');
+    const r=await fetch(API+'audio/transcriptions',{method:'POST',headers:{Authorization:'Bearer '+S.key},body:fd});
+    if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute.':'Could not transcribe ('+r.status+')');
+    const d=await r.json(),sg=d.segments||[],t=(d.text||'').trim();
+    locked=false;
+    if(!sg.length||sg.every(x=>x.no_speech_prob>0.55)||t.length<2){setStat();return}
+    await send(t);
+  }catch(e){toast(e.message);locked=false;setStat()}
+}
+async function startCall(){
+  if(!S.key){$('#set').showModal();return}
+  try{
+    stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+    ac=new (window.AudioContext||window.webkitAudioContext)();await ac.resume();
+    const src=ac.createMediaStreamSource(stream);an=ac.createAnalyser();an.fftSize=1024;buf=new Float32Array(an.fftSize);src.connect(an);
+    try{wl=await navigator.wakeLock.request('screen')}catch(e){}
+    call=true;rec=null;noise=0.01;timer=setInterval(tick,60);
+    const m=$('#mic');m.textContent='⏹ End class';m.classList.add('rec');setStat();
+    if(!hist.length){hist.push({role:'user',content:'(The call just started. Greet me warmly in simple Spanish and ask one easy question.)'});await turn()}
+  }catch(e){toast('Microphone blocked. Allow it in browser settings (the page must use https).')}
+}
+function endCall(){
+  call=false;clearInterval(timer);try{rec&&rec.state!='inactive'&&rec.stop()}catch(e){}rec=null;
+  try{stream.getTracks().forEach(t=>t.stop());ac.close();wl&&wl.release()}catch(e){}
+  try{speechSynthesis.cancel()}catch(e){}speaking=false;
+  const m=$('#mic');m.textContent='📞 Start class (hands-free)';m.classList.remove('rec');setStat();
 }
 
 /* Words tab */
@@ -176,31 +219,25 @@ function renderWords(){
     const c=el('div','card');c.append(el('div','es',card.w));
     const back=el('div','en',card.m+' · '+card.ex);back.hidden=true;c.append(back);
     const a=el('div','acts');a.style.justifyContent='center';
-    a.append(btn('🔊',()=>say(card.w)),btn('Show answer',()=>back.hidden=false),btn('Next',()=>{card=V[Math.floor(Math.random()*V.length)];renderWords()}),btn('Done',()=>{card=null;renderWords()}));
+    a.append(btn('🔊',()=>speakSegs([{lang:'es',text:card.w}])),btn('Show answer',()=>back.hidden=false),btn('Next',()=>{card=V[Math.floor(Math.random()*V.length)];renderWords()}),btn('Done',()=>{card=null;renderWords()}));
     c.append(a);w.append(c);return;
   }
   const p=btn('Practice flashcards',()=>{card=V[Math.floor(Math.random()*V.length)];renderWords()});p.className='pri';p.style.width='100%';w.append(p);
   V.forEach((v,i)=>{const r=el('div','item');const d=el('div');d.append(el('b',null,v.w),el('div','en',v.m));
-    r.append(d,btn('🔊',()=>say(v.w)),btn('✕',()=>{V.splice(i,1);save('vocab',V);renderWords()}));w.append(r)});
+    r.append(d,btn('🔊',()=>speakSegs([{lang:'es',text:v.w}])),btn('✕',()=>{V.splice(i,1);save('vocab',V);renderWords()}));w.append(r)});
 }
 function tab(t){$('#chat').hidden=t!='c';$('#words').hidden=t!='w';$('#bar').hidden=t!='c';$('#tc').classList.toggle('on',t=='c');$('#tw').classList.toggle('on',t=='w');if(t=='w')renderWords()}
 
-/* Setup */
-async function start(){
-  hist=[];$('#log').textContent='';lastEs='';
-  hist.push({role:'user',content:'(Begin the conversation with a simple greeting and one easy question.)'});
-  await turn();
-}
 $('#tc').onclick=()=>tab('c');$('#tw').onclick=()=>tab('w');
-$('#mic').onclick=toggleMic;
+$('#mic').onclick=()=>call?endCall():startCall();
 $('#send').onclick=()=>{const t=$('#inp').value;$('#inp').value='';send(t)};
-$('#ask').onclick=()=>{const t=$('#inp').value.trim();$('#inp').value='';if(t)help(t)};
 $('#inp').onkeydown=e=>{if(e.key=='Enter')$('#send').click()};
 $('#gear').onclick=()=>{$('#key').value=S.key;$('#model').value=S.model;$('#lvl').value=S.lvl;$('#scn').value=S.scn;$('#hide').checked=S.hide;$('#set').showModal()};
 $('#ok').onclick=()=>{S={key:$('#key').value.trim(),model:$('#model').value.trim()||'openai/gpt-oss-120b',lvl:$('#lvl').value,scn:$('#scn').value,hide:$('#hide').checked};save('st',S);$('#set').close()};
-$('#newc').onclick=()=>{$('#ok').click();start()};
+$('#newc').onclick=()=>{$('#ok').click();hist=[];$('#log').textContent='';if(call){hist.push({role:'user',content:'(New class. Greet me warmly in simple Spanish and ask one easy question.)'});turn()}};
 try{speechSynthesis.getVoices()}catch(e){}
-if(!S.key){$('#gear').click()}else start();
+setStat();
+if(!S.key)$('#gear').click();
 </script>
 </body>
 </html>
