@@ -79,7 +79,8 @@ dialog label{display:block;margin:10px 0 4px;font-size:14px;color:var(--mute)}
 const $=s=>document.querySelector(s);
 const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))||d}catch(e){return d}};
 const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
-let S=Object.assign({key:'',model:'llama-3.3-70b-versatile',lvl:'absolute beginner',scn:'Free chat',hide:true},load('st',{}));
+let S=Object.assign({key:'',model:'openai/gpt-oss-120b',lvl:'absolute beginner',scn:'Free chat',hide:true},load('st',{}));
+if(!/gpt-oss|compound|qwen/.test(S.model))S.model='openai/gpt-oss-120b';
 let V=load('vocab',[]), hist=[], lastEs='', rec=null, chunks=[];
 const API='https://api.groq.com/openai/v1/';
 
@@ -92,8 +93,8 @@ function words(t){const f=document.createDocumentFragment();t.split(/(\p{L}+)/u)
 async function llm(system,msgs){
   if(!S.key){$('#set').showModal();throw new Error('Add your Groq API key first.')}
   const r=await fetch(API+'chat/completions',{method:'POST',headers:{Authorization:'Bearer '+S.key,'Content-Type':'application/json'},
-    body:JSON.stringify({model:S.model,temperature:0.5,response_format:{type:'json_object'},messages:[{role:'system',content:system},...msgs]})});
-  if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute and try again.':r.status==401?'API key not accepted.':'Groq error '+r.status);
+    body:JSON.stringify({model:S.model,temperature:0.5,...(S.model.includes('gpt-oss')?{reasoning_effort:'low'}:{}),response_format:{type:'json_object'},messages:[{role:'system',content:system},...msgs]})});
+  if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute and try again.':r.status==401?'API key not accepted.':r.status==404?'Model "'+S.model+'" not found. Pick a current one in Settings.':'Groq error '+r.status);
   return JSON.parse((await r.json()).choices[0].message.content);
 }
 const tutorSys=()=>`You are a warm Spanish tutor for an English speaker who is an ${S.lvl}. Scenario: ${S.scn}. Reply in simple Spanish: one or two short sentences, common words, mostly present tense. End with an easy question. If the learner's last message had Spanish mistakes, include a correction; if it was fine, fix is null. Return JSON only: {"es":"reply","en":"English translation","fix":null or {"said":"what they said","better":"corrected Spanish","why":"one short English reason"}}`;
@@ -155,7 +156,7 @@ async function toggleMic(){
       try{
         if(!S.key){$('#set').showModal();return}
         const fd=new FormData();fd.append('file',new Blob(chunks,{type:rec.mimeType}),'speech.webm');
-        fd.append('model','whisper-large-v3-turbo');fd.append('language','es');fd.append('temperature','0');
+        fd.append('model','whisper-large-v3');fd.append('language','es');fd.append('temperature','0');
         const r=await fetch(API+'audio/transcriptions',{method:'POST',headers:{Authorization:'Bearer '+S.key},body:fd});
         if(!r.ok)throw new Error(r.status==429?'Rate limit reached. Wait a minute.':'Could not transcribe ('+r.status+')');
         const t=(await r.json()).text;
@@ -196,7 +197,7 @@ $('#send').onclick=()=>{const t=$('#inp').value;$('#inp').value='';send(t)};
 $('#ask').onclick=()=>{const t=$('#inp').value.trim();$('#inp').value='';if(t)help(t)};
 $('#inp').onkeydown=e=>{if(e.key=='Enter')$('#send').click()};
 $('#gear').onclick=()=>{$('#key').value=S.key;$('#model').value=S.model;$('#lvl').value=S.lvl;$('#scn').value=S.scn;$('#hide').checked=S.hide;$('#set').showModal()};
-$('#ok').onclick=()=>{S={key:$('#key').value.trim(),model:$('#model').value.trim()||'llama-3.3-70b-versatile',lvl:$('#lvl').value,scn:$('#scn').value,hide:$('#hide').checked};save('st',S);$('#set').close()};
+$('#ok').onclick=()=>{S={key:$('#key').value.trim(),model:$('#model').value.trim()||'openai/gpt-oss-120b',lvl:$('#lvl').value,scn:$('#scn').value,hide:$('#hide').checked};save('st',S);$('#set').close()};
 $('#newc').onclick=()=>{$('#ok').click();start()};
 try{speechSynthesis.getVoices()}catch(e){}
 if(!S.key){$('#gear').click()}else start();
